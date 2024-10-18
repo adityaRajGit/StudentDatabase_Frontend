@@ -13,57 +13,78 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { db } from '@/lib/firebase';
-import { 
-  collection, 
-  addDoc, 
-  query, 
-  orderBy, 
-  onSnapshot,
-  Timestamp,
-  getDocs
-} from 'firebase/firestore';
+import axios from 'axios';
+
 
 interface StudentData {
   id: string;
   name: string;
   marks: number;
-  timestamp: Timestamp;
+  timestamp: {
+    seconds: number;
+    nanoseconds: number;
+  };
 }
 
-// Component for the chart
+interface ApiResponse {
+  success: boolean;
+  data?: any;
+  message?: string;
+  error?: string;
+}
+
+const API_BASE_URL = 'http://localhost:3001/api';
+
+
+const api = {
+  getAllStudents: async (): Promise<StudentData[]> => {
+    const response = await axios.get<ApiResponse>(`${API_BASE_URL}/students`);
+    return response.data.success ? response.data.data : [];
+  },
+
+  addStudent: async (name: string, marks: number): Promise<ApiResponse> => {
+    const response = await axios.post<ApiResponse>(`${API_BASE_URL}/students`, {
+      name,
+      marks
+    });
+    return response.data;
+  },
+
+  getTopPerformers: async (limit: number = 5): Promise<StudentData[]> => {
+    const response = await axios.get<ApiResponse>(
+      `${API_BASE_URL}/top-performers?limit=${limit}`
+    );
+    return response.data.success ? response.data.data : [];
+  }
+};
+
+
 function MarksChart() {
   const [studentData, setStudentData] = React.useState<StudentData[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
 
-  React.useEffect(() => {
-    // Create a query to get all students, ordered by timestamp
-    const q = query(
-      collection(db, 'students'),
-      orderBy('timestamp', 'desc')
-    );
-
-    // Set up real-time listener
-    const unsubscribe = onSnapshot(q, 
-      (querySnapshot) => {
-        const students = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as StudentData[];
-        setStudentData(students);
-        setLoading(false);
-      },
-      (error) => {
-        console.error("Error fetching students:", error);
-        setError("Failed to load student data");
-        setLoading(false);
-      }
-    );
-
-    // Cleanup subscription on unmount
-    return () => unsubscribe();
+  const fetchData = React.useCallback(async () => {
+    try {
+      const data = await api.getAllStudents();
+      setStudentData(data);
+      setError("");
+    } catch (err) {
+      console.error("Error fetching students:", err);
+      setError("Failed to load student data");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  React.useEffect(() => {
+    fetchData();
+
+    
+    const intervalId = setInterval(fetchData, 5000);
+
+    return () => clearInterval(intervalId);
+  }, [fetchData]);
 
   const chartData = studentData.map(student => ({
     name: student.name,
@@ -75,7 +96,7 @@ function MarksChart() {
       <CardHeader>
         <CardTitle>Student Marks Distribution</CardTitle>
         <CardDescription>
-          Showing marks for all students (Real-time updates)
+          Showing marks for all students (Updates every 5 seconds)
         </CardDescription>
       </CardHeader>
       <CardContent className="px-2 sm:p-6">
@@ -105,12 +126,21 @@ function MarksChart() {
           </div>
         )}
       </CardContent>
+      <CardFooter className="justify-center">
+        <Button 
+          variant="outline" 
+          onClick={fetchData}
+          disabled={loading}
+        >
+          Refresh Data
+        </Button>
+      </CardFooter>
     </Card>
   );
 }
 
-// Component for the form
-function CardWithForm() {
+
+function CardWithForm({ onSubmitSuccess }: { onSubmitSuccess: () => void }) {
   const [name, setName] = React.useState("");
   const [marks, setMarks] = React.useState("");
   const [message, setMessage] = React.useState("");
@@ -120,6 +150,8 @@ function CardWithForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setError("");
+    setMessage("");
 
     try {
       if (!name.trim() || !marks.trim()) {
@@ -128,26 +160,24 @@ function CardWithForm() {
       }
 
       const marksNumber = Number(marks);
-      if (isNaN(marksNumber)) {
-        setError("Marks must be a valid number");
+      if (isNaN(marksNumber) || marksNumber < 0 || marksNumber > 100) {
+        setError("Marks must be a number between 0 and 100");
         return;
       }
 
-      // Add document to Firestore
-      const docRef = await addDoc(collection(db, 'students'), {
-        name: name.trim(),
-        marks: marksNumber,
-        timestamp: Timestamp.now()
-      });
-
-      setMessage("Data stored successfully");
-      setError("");
-      setName("");
-      setMarks("");
+      const response = await api.addStudent(name.trim(), marksNumber);
+      
+      if (response.success) {
+        setMessage(response.message || "Data stored successfully");
+        setName("");
+        setMarks("");
+        onSubmitSuccess();
+      } else {
+        setError(response.error || "Failed to submit data");
+      }
     } catch (err) {
       console.error("Submission error:", err);
       setError(err instanceof Error ? err.message : "Failed to submit data");
-      setMessage("");
     } finally {
       setIsSubmitting(false);
     }
@@ -177,6 +207,8 @@ function CardWithForm() {
             <Input
               id="marks"
               type="number"
+              min="0"
+              max="100"
               placeholder="Total Marks"
               value={marks}
               onChange={(e) => setMarks(e.target.value)}
@@ -184,14 +216,19 @@ function CardWithForm() {
               disabled={isSubmitting}
             />
           </div>
-          {message && <p className="text-green-600 text-sm">{message}</p>}
-          {error && <p className="text-red-600 text-sm">{error}</p>}
+          {message && (
+            <p className="text-green-600 text-sm animate-fadeIn">{message}</p>
+          )}
+          {error && (
+            <p className="text-red-600 text-sm animate-fadeIn">{error}</p>
+          )}
         </form>
       </CardContent>
       <CardFooter>
         <Button 
           onClick={handleSubmit} 
           disabled={isSubmitting}
+          className="w-full"
         >
           {isSubmitting ? "Submitting..." : "Submit"}
         </Button>
@@ -200,12 +237,23 @@ function CardWithForm() {
   );
 }
 
-// Main layout
+
 export default function Layout() {
+  const [refreshTrigger, setRefreshTrigger] = React.useState(0);
+
+  const handleSubmitSuccess = () => {
+    setRefreshTrigger(prev => prev + 1);
+  };
+
   return (
-    <div className="flex justify-between space-x-4 p-4">
-      <CardWithForm />
-      <MarksChart />
+    <div className="min-h-screen bg-gray-50 p-8">
+      <div className="max-w-6xl mx-auto">
+        <h1 className="text-3xl font-bold mb-8">Student Marks Dashboard</h1>
+        <div className="flex flex-col md:flex-row gap-8">
+          <CardWithForm onSubmitSuccess={handleSubmitSuccess} />
+          <MarksChart key={refreshTrigger} />
+        </div>
+      </div>
     </div>
   );
 }
