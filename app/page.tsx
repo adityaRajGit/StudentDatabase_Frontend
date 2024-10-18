@@ -1,101 +1,211 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import * as React from "react";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis, Tooltip } from "recharts";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { db } from '@/lib/firebase';
+import { 
+  collection, 
+  addDoc, 
+  query, 
+  orderBy, 
+  onSnapshot,
+  Timestamp,
+  getDocs
+} from 'firebase/firestore';
+
+interface StudentData {
+  id: string;
+  name: string;
+  marks: number;
+  timestamp: Timestamp;
+}
+
+// Component for the chart
+function MarksChart() {
+  const [studentData, setStudentData] = React.useState<StudentData[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    // Create a query to get all students, ordered by timestamp
+    const q = query(
+      collection(db, 'students'),
+      orderBy('timestamp', 'desc')
+    );
+
+    // Set up real-time listener
+    const unsubscribe = onSnapshot(q, 
+      (querySnapshot) => {
+        const students = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as StudentData[];
+        setStudentData(students);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error fetching students:", error);
+        setError("Failed to load student data");
+        setLoading(false);
+      }
+    );
+
+    // Cleanup subscription on unmount
+    return () => unsubscribe();
+  }, []);
+
+  const chartData = studentData.map(student => ({
+    name: student.name,
+    marks: student.marks
+  }));
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+    <Card className="w-[600px]">
+      <CardHeader>
+        <CardTitle>Student Marks Distribution</CardTitle>
+        <CardDescription>
+          Showing marks for all students (Real-time updates)
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="px-2 sm:p-6">
+        {loading ? (
+          <p>Loading data...</p>
+        ) : error ? (
+          <p className="text-red-600">{error}</p>
+        ) : (
+          <div className="h-[400px] w-full">
+            <BarChart
+              width={550}
+              height={350}
+              data={chartData}
+              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="name"
+                angle={-45}
+                textAnchor="end"
+                height={70}
+              />
+              <YAxis />
+              <Tooltip />
+              <Bar dataKey="marks" fill="#8884d8" />
+            </BarChart>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+// Component for the form
+function CardWithForm() {
+  const [name, setName] = React.useState("");
+  const [marks, setMarks] = React.useState("");
+  const [message, setMessage] = React.useState("");
+  const [error, setError] = React.useState("");
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+
+    try {
+      if (!name.trim() || !marks.trim()) {
+        setError("Name and marks are required");
+        return;
+      }
+
+      const marksNumber = Number(marks);
+      if (isNaN(marksNumber)) {
+        setError("Marks must be a valid number");
+        return;
+      }
+
+      // Add document to Firestore
+      const docRef = await addDoc(collection(db, 'students'), {
+        name: name.trim(),
+        marks: marksNumber,
+        timestamp: Timestamp.now()
+      });
+
+      setMessage("Data stored successfully");
+      setError("");
+      setName("");
+      setMarks("");
+    } catch (err) {
+      console.error("Submission error:", err);
+      setError(err instanceof Error ? err.message : "Failed to submit data");
+      setMessage("");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Card className="w-[350px]">
+      <CardHeader>
+        <CardTitle>Project</CardTitle>
+        <CardDescription>Enter Marks for Candidate</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="flex flex-col space-y-1.5">
+            <Label htmlFor="name">Name</Label>
+            <Input
+              id="name"
+              placeholder="Candidate Name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              disabled={isSubmitting}
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+          </div>
+          <div className="flex flex-col space-y-1.5">
+            <Label htmlFor="marks">Marks</Label>
+            <Input
+              id="marks"
+              type="number"
+              placeholder="Total Marks"
+              value={marks}
+              onChange={(e) => setMarks(e.target.value)}
+              required
+              disabled={isSubmitting}
+            />
+          </div>
+          {message && <p className="text-green-600 text-sm">{message}</p>}
+          {error && <p className="text-red-600 text-sm">{error}</p>}
+        </form>
+      </CardContent>
+      <CardFooter>
+        <Button 
+          onClick={handleSubmit} 
+          disabled={isSubmitting}
         >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+          {isSubmitting ? "Submitting..." : "Submit"}
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
+// Main layout
+export default function Layout() {
+  return (
+    <div className="flex justify-between space-x-4 p-4">
+      <CardWithForm />
+      <MarksChart />
     </div>
   );
 }
